@@ -1,10 +1,13 @@
-## New features:
+## dynamic-vesting-escrow
 
-- User specific vesting period.
-- User specific pause, unpause, terminate.
-- Ability to get the funds out for the terminated user(s).
-- Global vesting pause, unpause, terminate.
-- Ability to get out the unvested tokens using rug_pull. The user(s) is/are still entitled to the vested portion.
-- The first unlock can be delayed using cliff_length.
+> A vesting escsrow for dynamic teams, based on Curve vesting escrow
+
+### Features:
+
 - Ability to claim a specific amount.
-- Ability to add more participants (no dilution) in the vesting escrow.
+- Recipient specific startTime, endTime. Configurable flag to decide if startTime can be in past.
+- Recipient specific cliff duration (min duration after start time to call claim).
+- Recipient specific pause, unpause, terminate. "Pause" freezes the recipient's vesting state (claim blocked), and updates the recipient specific parameters on "UnPause" (claim unblocked) so that number of tokens vesting per second remains the same for complete lifecycle of the recipient.
+- Ability to automatically transfer unvested tokens of the "Terminated" recipient to a "safe" address, and transfer all the vested tokens to the recipient.
+- Global vesting escrow termination. Automatically transfers unvested tokens to a "safe" address. The recipient(s) is/are still entitled to the vested portion.
+- Ability to add more recipients (no dilution) in the vesting escrow at any point in time (provided that escrow is not terminated).
