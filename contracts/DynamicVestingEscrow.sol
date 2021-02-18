@@ -282,9 +282,6 @@ contract DynamicVestingEscrow is Ownable {
             "claim: cannot claim passed amount"
         );
 
-        // transfer the amount to the _recipient
-        IERC20(token).safeTransfer(_recipient, _amount);
-
         // increase user specific totalClaimed
         recipient.totalClaimed.add(_amount);
 
@@ -302,6 +299,9 @@ contract DynamicVestingEscrow is Ownable {
             totalClaimed <= totalAllocatedSupply,
             "claim: cannot claim more than allocated to escrow"
         );
+
+        // transfer the amount to the _recipient
+        IERC20(token).safeTransfer(_recipient, _amount);
     }
 
     // get total vested tokens
