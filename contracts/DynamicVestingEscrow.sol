@@ -121,11 +121,11 @@ contract DynamicVestingEscrow is Ownable {
     // Add and fund new recipients
     // NOTE: Owner needs to approve tokens to this contract
     function addRecipients(
-        address[] memory _recipients,
-        uint256[] memory _amounts,
-        uint256[] memory _startTimes,
-        uint256[] memory _endTimes,
-        uint256[] memory _cliffDurations,
+        address[] calldata _recipients,
+        uint256[] calldata _amounts,
+        uint256[] calldata _startTimes,
+        uint256[] calldata _endTimes,
+        uint256[] calldata _cliffDurations,
         uint256 _totalAmount
     ) external onlyOwner escrowNotTerminated {
         // Every input should be of equal length (greater than 0)
