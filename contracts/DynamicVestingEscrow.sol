@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
+import "@openzeppelin/contracts/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract DynamicVestingEscrow is Ownable {
@@ -378,12 +379,29 @@ contract DynamicVestingEscrow is Ownable {
         // get recipient
         Recipient memory _recipient = recipients[recipient];
 
-        // We know that vestingPerSec is constant for a recipient for entirety of their vesting period
-        // locked = vestingPerSec*(endTime-block.timestamp)
-        return
-            _recipient.vestingPerSec.mul(
-                _recipient.endTime.sub(block.timestamp)
-            );
+        if (_recipient.recipientVestingStatus == Status.UnPaused) {
+            // We know that vestingPerSec is constant for a recipient for entirety of their vesting period
+            // locked = vestingPerSec*(endTime-min(block.timestamp, startTime))
+            return
+                _recipient.vestingPerSec.mul(
+                    _recipient.endTime.sub(
+                        max(
+                            block.timestamp,
+                            _recipient.startTime.add(_recipient.cliffTime)
+                        )
+                    )
+                );
+        } else if (_recipient.recipientVestingStatus == Status.Paused) {
+            return
+                _recipient.vestingPerSec.mul(
+                    _recipient.endTime.sub(
+                        max(
+                            _recipient.lastPausedAt,
+                            _recipient.startTime.add(_recipient.cliffTime)
+                        )
+                    )
+                );
+        }
     }
 
     // Allows owner to rescue the ERC20 assets (other than token) in case of any emergency
