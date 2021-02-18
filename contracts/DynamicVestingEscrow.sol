@@ -14,9 +14,9 @@ contract DynamicVestingEscrow is Ownable {
     using SafeMath for uint256;
 
     /**
-    Paused: Vesting is paused. Claim(s) is/are blocked.
-    UnPaused: Vesting is paused. Claim(s) is/are unblocked. The vesting resumes from the time it was paused.
-    Terminated: Recipient is terminated, meaning vesting is stopped and claims are blocked forver. No way to go back. 
+    Paused: Vesting is paused. Claim(s) is/are blocked. Recipient can be Unpaused by the owner.
+    UnPaused: Vesting is unpaused. Claim(s) is/are unblocked. The vesting resumes from the time it was paused (in case the recipient was paused).
+    Terminated: Recipient is terminated, meaning vesting is stopped and claims are blocked forever. No way to go back. 
     */
     enum Status {Paused, UnPaused, Terminated}
 
@@ -173,7 +173,10 @@ contract DynamicVestingEscrow is Ownable {
                 _endTimes[i],
                 _cliffTimes[i],
                 0,
-                _amounts[i].div(_endTimes[i].sub(_startTimes[i])),
+                // vestingPerSec = totalVestingAmount/(endTimes-(startTime+cliffTime))
+                _amounts[i].div(
+                    _endTimes[i].sub(_startTimes[i].add(_cliffTimes[i]))
+                ),
                 _amounts[i],
                 0,
                 Status.UnPaused
@@ -222,6 +225,8 @@ contract DynamicVestingEscrow is Ownable {
         uint256 pausedFor = block.timestamp.sub(
             recipients[recipient].lastPausedAt
         );
+        // extend the cliffTime by the pause duration
+        recipients[recipient].cliffTime.add(pausedFor);
         // extend the endTime by the pause duration
         recipients[recipient].endTime.add(pausedFor);
     }
@@ -255,6 +260,9 @@ contract DynamicVestingEscrow is Ownable {
     {
         // get recipient
         Recipient storage recipient = recipients[msg.sender];
+
+        // recipient should be able to claim
+        require(canClaim(msg.sender), "claim: recipient cannot claim");
 
         // max amount the user can claim right now
         uint256 claimableAmount = claimableAmountFor(msg.sender);
@@ -301,6 +309,41 @@ contract DynamicVestingEscrow is Ownable {
 
         // totalVested = totalClaimed + claimableAmountFor
         return _recipient.totalClaimed.add(claimableAmountFor(recipient));
+    }
+
+    function canClaim(address recipient)
+        public
+        view
+        escrowNotTerminated
+        isNonZeroAddress(recipient)
+        returns (bool)
+    {
+        Recipient memory _recipients = recipients[recipient];
+
+        // recipient status should be UnPaused
+        if (_recipients.recipientVestingStatus != Status.UnPaused) {
+            return false;
+        }
+
+        // recipient should have completed the cliffTime
+        if (
+            block.timestamp < (_recipients.startTime.add(_recipients.cliffTime))
+        ) {
+            return false;
+        }
+    }
+
+    function claimStartTimeFor(address recipient)
+        public
+        view
+        escrowNotTerminated
+        recipientIsUnpaused(recipient)
+        returns (uint256)
+    {
+        return
+            recipients[recipient].startTime.add(
+                recipients[recipient].cliffTime
+            );
     }
 
     // tokens that can be claimed right now by a recipient
