@@ -312,6 +312,7 @@ contract DynamicVestingEscrow is Ownable {
         return _recipient.totalClaimed.add(claimableAmountFor(recipient));
     }
 
+    // Can a recipient claim right now
     function canClaim(address recipient)
         public
         view
@@ -332,8 +333,11 @@ contract DynamicVestingEscrow is Ownable {
         ) {
             return false;
         }
+
+        return true;
     }
 
+    // Time at which the recipient can start claiming tokens
     function claimStartTimeFor(address recipient)
         public
         view
@@ -347,7 +351,7 @@ contract DynamicVestingEscrow is Ownable {
             );
     }
 
-    // tokens that can be claimed right now by a recipient
+    // Tokens that can be claimed right now by a recipient
     function claimableAmountFor(address recipient)
         public
         view
@@ -379,9 +383,14 @@ contract DynamicVestingEscrow is Ownable {
         // get recipient
         Recipient memory _recipient = recipients[recipient];
 
+        // Nothing is locked if the recipient passed the endTime
+        if (block.timestamp >= _recipient.endTime) {
+            return 0;
+        }
+
         if (_recipient.recipientVestingStatus == Status.UnPaused) {
             // We know that vestingPerSec is constant for a recipient for entirety of their vesting period
-            // locked = vestingPerSec*(endTime-min(block.timestamp, startTime))
+            // locked = vestingPerSec*(endTime-max(block.timestamp, startTime+cliffTime))
             return
                 _recipient.vestingPerSec.mul(
                     _recipient.endTime.sub(
@@ -392,6 +401,8 @@ contract DynamicVestingEscrow is Ownable {
                     )
                 );
         } else if (_recipient.recipientVestingStatus == Status.Paused) {
+            // We know that vestingPerSec is constant for a recipient for entirety of their vesting period
+            // locked = vestingPerSec*(endTime-max(lastPausedAt, startTime+cliffTime))
             return
                 _recipient.vestingPerSec.mul(
                     _recipient.endTime.sub(
