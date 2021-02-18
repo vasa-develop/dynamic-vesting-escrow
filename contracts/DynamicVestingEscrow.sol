@@ -394,7 +394,7 @@ contract DynamicVestingEscrow is Ownable {
             return
                 _recipient.vestingPerSec.mul(
                     _recipient.endTime.sub(
-                        max(
+                        Math.max(
                             block.timestamp,
                             _recipient.startTime.add(_recipient.cliffTime)
                         )
@@ -406,7 +406,7 @@ contract DynamicVestingEscrow is Ownable {
             return
                 _recipient.vestingPerSec.mul(
                     _recipient.endTime.sub(
-                        max(
+                        Math.max(
                             _recipient.lastPausedAt,
                             _recipient.startTime.add(_recipient.cliffTime)
                         )
