@@ -20,11 +20,11 @@ contract DynamicVestingEscrow is Ownable {
     using SafeMath for uint256;
 
     /**
-    Paused: Vesting is paused. Claim(s) is/are blocked. Recipient can be Unpaused by the owner.
-    UnPaused: Vesting is unpaused. Claim(s) is/are unblocked. The vesting resumes from the time it was paused (in case the recipient was paused).
+    Paused: Vesting is paused. Recipient can be Unpaused by the owner.
+    UnPaused: Vesting is unpaused. The vesting resumes from the time it was paused (in case the recipient was paused).
     Terminated: Recipient is terminated, meaning vesting is stopped and claims are blocked forever. No way to go back. 
     */
-    enum Status {Paused, UnPaused, Terminated}
+    enum Status {Terminated, Paused, UnPaused}
 
     struct Recipient {
         uint256 startTime; // timestamp at which vesting period will start (should be in future)
@@ -39,7 +39,7 @@ contract DynamicVestingEscrow is Ownable {
 
     mapping(address => Recipient) public recipients; // mapping from recipient address to Recipient struct
     mapping(address => bool) public lockedTokensSeizedFor; // in case of escrow termination, a mapping to keep track of which
-    address public constant token = 0x6B175474E89094C44Da98b954EedeAC495271d0F; // vesting token address
+    address public token; // vesting token address
     // WARNING: The contract assumes that the token address is NOT malicious.
 
     uint256 public dust; // total amount of token that is sitting as dust in this contract (unallocatedSupply)
@@ -68,7 +68,7 @@ contract DynamicVestingEscrow is Ownable {
         // recipient should be in UnPaused status
         require(
             recipients[recipient].recipientVestingStatus == Status.UnPaused,
-            "recipientIsUnpaused: escrow terminated"
+            "recipientIsUnpaused: recipient NOT in UnPaused state"
         );
         _;
     }
@@ -84,13 +84,16 @@ contract DynamicVestingEscrow is Ownable {
         _;
     }
 
-    constructor(address safeAddress) public {
+    constructor(address _token, address _safeAddress) public {
         // SAFE_ADDRESS should NOT be 0 address
         require(
-            SAFE_ADDRESS != address(0),
-            "constructor: invalid SAFE_ADDRESS"
+            _safeAddress != address(0),
+            "constructor: SAFE_ADDRESS cannot be 0 address"
         );
-        SAFE_ADDRESS = safeAddress;
+        // token should NOT be 0 address
+        require(_token != address(0), "constructor: token cannot be 0 address");
+        SAFE_ADDRESS = _safeAddress;
+        token = _token;
     }
 
     /// @notice Terminates the vesting escrow forever.
@@ -115,8 +118,8 @@ contract DynamicVestingEscrow is Ownable {
     {
         // Check if the safeAddress is NOT a 0 address
         require(
-            SAFE_ADDRESS != address(0),
-            "updateSafeAddress: invalid SAFE_ADDRESS"
+            safeAddress != address(0),
+            "updateSafeAddress: SAFE_ADDRESS cannot be 0 address"
         );
         SAFE_ADDRESS = safeAddress;
     }
@@ -157,7 +160,7 @@ contract DynamicVestingEscrow is Ownable {
 
         // transfer funds from the msg.sender
         // Will fail if the allowance is less than _totalAmount
-        IERC20(token).safeTransferFrom(msg.sender, address(this), _totalAmount);
+        IERC20(token).transferFrom(msg.sender, address(this), _totalAmount);
 
         // register _totalAmount before allocation
         uint256 _before = _totalAmount;
@@ -165,7 +168,10 @@ contract DynamicVestingEscrow is Ownable {
         // populate recipients mapping
         for (uint256 i = 0; i < _amounts.length; i++) {
             // recipient should NOT be a 0 address
-            require(_recipients[i] != address(0), "addRecipients: 0 address");
+            require(
+                _recipients[i] != address(0),
+                "addRecipients: recipient cannot be 0 address"
+            );
             // if past startTime is NOT allowed, then the startTime should be in future
             require(
                 ALLOW_PAST_START_TIME || (_startTimes[i] >= block.timestamp),
@@ -174,7 +180,7 @@ contract DynamicVestingEscrow is Ownable {
             // endTime should be greater than startTime
             require(
                 _endTimes[i] > _startTimes[i],
-                "addRecipients: endTime before startTime"
+                "addRecipients: endTime should be after startTime"
             );
             // cliffDuration should be less than vesting duration
             require(
@@ -182,7 +188,10 @@ contract DynamicVestingEscrow is Ownable {
                 "addRecipients: cliffDuration too long"
             );
             // amount should be greater than 0
-            require(_amounts[i] > 0, "addRecipients: 0 vesting amount");
+            require(
+                _amounts[i] > 0,
+                "addRecipients: vesting amount cannot be 0"
+            );
             // add recipient to the recipients mapping
             recipients[_recipients[i]] = Recipient(
                 _startTimes[i],
@@ -199,12 +208,14 @@ contract DynamicVestingEscrow is Ownable {
             );
             // reduce _totalAmount
             // Will revert if the _totalAmount is less than sum of _amounts
-            _totalAmount.sub(_amounts[i]);
+            _totalAmount = _totalAmount.sub(_amounts[i]);
         }
         // add the allocated token amount to totalAllocatedSupply
-        totalAllocatedSupply.add(_before.sub(_totalAmount));
+        totalAllocatedSupply = totalAllocatedSupply.add(
+            _before.sub(_totalAmount)
+        );
         // register remaining _totalAmount as dust
-        dust.add(_totalAmount);
+        dust = dust.add(_totalAmount);
     }
 
     /// @notice Pause recipient vesting
@@ -236,10 +247,12 @@ contract DynamicVestingEscrow is Ownable {
     ///      recipient are shifted by the pause duration so that the recipient resumes with the same state
     ///      at the time it was paused.
     ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
     /// @param recipient The recipient address for which vesting will be unpaused.
     function unPauseRecipient(address recipient)
         external
         onlyOwner
+        escrowNotTerminated
         isNonZeroAddress(recipient)
     {
         // current recipient status should be Paused
@@ -254,9 +267,13 @@ contract DynamicVestingEscrow is Ownable {
             recipients[recipient].lastPausedAt
         );
         // extend the cliffDuration by the pause duration
-        recipients[recipient].cliffDuration.add(pausedFor);
+        recipients[recipient].cliffDuration = recipients[recipient]
+            .cliffDuration
+            .add(pausedFor);
         // extend the endTime by the pause duration
-        recipients[recipient].endTime.add(pausedFor);
+        recipients[recipient].endTime = recipients[recipient].endTime.add(
+            pausedFor
+        );
     }
 
     /// @notice Terminate recipient vesting
@@ -274,26 +291,29 @@ contract DynamicVestingEscrow is Ownable {
         // current recipient status should NOT be Terminated
         require(
             recipients[recipient].recipientVestingStatus != Status.Terminated,
-            "unPauseRecipient: cannot terminate"
+            "terminateRecipient: cannot terminate"
         );
-        // set vesting status of the recipient as "Terminated"
-        recipients[recipient].recipientVestingStatus = Status.Terminated;
-        // transfer unclaimed tokens to the recipient
-        _claimFor(claimableAmountFor(recipient), recipient);
-        // transfer locked tokens to the SAFE_ADDRESS
+        // claim for the user if possible
+        if (canClaim(recipient)) {
+            // transfer unclaimed tokens to the recipient
+            _claimFor(claimableAmountFor(recipient), recipient);
+            // transfer locked tokens to the SAFE_ADDRESS
+        }
         uint256 _bal = recipients[recipient].totalVestingAmount.sub(
             recipients[recipient].totalClaimed
         );
-        IERC20(token).safeTransfer(SAFE_ADDRESS, _bal);
+        IERC20(token).transfer(SAFE_ADDRESS, _bal);
+        // set vesting status of the recipient as "Terminated"
+        recipients[recipient].recipientVestingStatus = Status.Terminated;
     }
 
     /// @notice Claim a specific amount of tokens.
     /// @dev Claim a specific amount of tokens.
     ///      Will revert if amount parameter is greater than the claimable amount
     ///      of tokens for the recipient at the time of function invocation.
-    ///      Can be invoked by any UnPaused recipient.
+    ///      Can be invoked by any non-terminated recipient.
     /// @param amount The amount of tokens recipient wants to claim.
-    function claim(uint256 amount) external recipientIsUnpaused(msg.sender) {
+    function claim(uint256 amount) external {
         _claimFor(amount, msg.sender);
     }
 
@@ -303,7 +323,7 @@ contract DynamicVestingEscrow is Ownable {
         Recipient storage recipient = recipients[_recipient];
 
         // recipient should be able to claim
-        require(canClaim(_recipient), "claim: recipient cannot claim");
+        require(canClaim(_recipient), "_claimFor: recipient cannot claim");
 
         // max amount the user can claim right now
         uint256 claimableAmount = claimableAmountFor(_recipient);
@@ -311,42 +331,42 @@ contract DynamicVestingEscrow is Ownable {
         // amount parameter should be less or equal to than claimable amount
         require(
             _amount <= claimableAmount,
-            "claim: cannot claim passed amount"
+            "_claimFor: cannot claim passed amount"
         );
 
         // increase user specific totalClaimed
-        recipient.totalClaimed.add(_amount);
+        recipient.totalClaimed = recipient.totalClaimed.add(_amount);
 
         // user's totalClaimed should NOT be greater than user's totalVestingAmount
         require(
             recipient.totalClaimed <= recipient.totalVestingAmount,
-            "claim: cannot claim more than you deserve"
+            "_claimFor: cannot claim more than you deserve"
         );
 
         // increase global totalClaimed
-        totalClaimed.add(_amount);
+        totalClaimed = totalClaimed.add(_amount);
 
         // totalClaimed should NOT be greater than total totalAllocatedSupply
         require(
             totalClaimed <= totalAllocatedSupply,
-            "claim: cannot claim more than allocated to escrow"
+            "_claimFor: cannot claim more than allocated to escrow"
         );
 
         // transfer the amount to the _recipient
-        IERC20(token).safeTransfer(_recipient, _amount);
+        IERC20(token).transfer(_recipient, _amount);
     }
 
     /// @notice Get total vested tokens for multiple recipients.
     /// @dev Reverts if any of the recipients is terminated.
     /// @param _recipients An array of non-terminated recipient addresses.
     /// @return totalAmount total vested tokens for all _recipients passed.
-    function batchTotalVestedOf(address[] calldata _recipients)
+    function batchTotalVestedOf(address[] memory _recipients)
         public
         view
         returns (uint256 totalAmount)
     {
         for (uint256 i = 0; i < _recipients.length; i++) {
-            totalAmount.add(totalVestedOf(_recipients[i]));
+            totalAmount = totalAmount.add(totalVestedOf(_recipients[i]));
         }
     }
 
@@ -377,22 +397,24 @@ contract DynamicVestingEscrow is Ownable {
         isNonZeroAddress(recipient)
         returns (bool)
     {
-        Recipient memory _recipients = recipients[recipient];
+        Recipient memory _recipient = recipients[recipient];
 
-        // recipient status should be UnPaused
-        if (_recipients.recipientVestingStatus != Status.UnPaused) {
+        // terminated recipients cannot claim
+        if (_recipient.recipientVestingStatus == Status.Terminated) {
             return false;
         }
 
-        // recipient should have completed the cliffDuration
-        if (
-            block.timestamp <
-            (_recipients.startTime.add(_recipients.cliffDuration))
-        ) {
-            return false;
+        // In case of a paused recipient
+        if (_recipient.recipientVestingStatus == Status.Paused) {
+            return
+                _recipient.lastPausedAt >=
+                _recipient.startTime.add(_recipient.cliffDuration);
         }
 
-        return true;
+        // In case of a unpaused recipient, recipient can claim if the cliff duration (inclusive) has passed.
+        return
+            block.timestamp >=
+            _recipient.startTime.add(_recipient.cliffDuration);
     }
 
     /// @notice Check the time after (inclusive) which recipient can successfully invoke claim.
@@ -436,13 +458,13 @@ contract DynamicVestingEscrow is Ownable {
     /// @dev Reverts if any of the recipients is terminated.
     /// @param _recipients An array of non-terminated recipient addresses.
     /// @return totalAmount Total locked (non-vested) tokens for multiple non-terminated recipient addresses.
-    function batchTotalLockedOf(address[] calldata _recipients)
+    function batchTotalLockedOf(address[] memory _recipients)
         public
         view
         returns (uint256 totalAmount)
     {
         for (uint256 i = 0; i < _recipients.length; i++) {
-            totalAmount.add(totalLockedOf(_recipients[i]));
+            totalAmount = totalAmount.add(totalLockedOf(_recipients[i]));
         }
     }
 
@@ -523,24 +545,35 @@ contract DynamicVestingEscrow is Ownable {
         returns (uint256 rescued)
     {
         // asset address should NOT be a 0 address
-        require(asset != address(0), "inCaseAssetGetStuck: 0 address");
+        require(
+            asset != address(0),
+            "inCaseAssetGetStuck: asset cannot be 0 address"
+        );
         // asset address should NOT be the token address
         require(asset != token, "inCaseAssetGetStuck: cannot withdraw token");
         // to address should NOT a 0 address
-        require(to != address(0), "inCaseAssetGetStuck: 0 address");
+        require(
+            to != address(0),
+            "inCaseAssetGetStuck: to cannot be 0 address"
+        );
         // transfer all the balance of the asset this contract hold to the "to" address
-        rescued = IERC20(asset).balanceOf(asset);
-        IERC20(asset).safeTransfer(to, rescued);
+        rescued = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).transfer(to, rescued);
     }
 
-    /// @notice Transfers the dust to the SAFE_ADDRESS
-    /// @dev It is assumed that the SAFE_ADDRESS is NOT malicious
+    /// @notice Transfers the dust to the SAFE_ADDRESS.
+    /// @dev It is assumed that the SAFE_ADDRESS is NOT malicious.
     ///      Only owner of the vesting escrow can invoke this function.
-    function transferDust() external onlyOwner {
+    /// @return Amount of dust to the SAFE_ADDRESS.
+    function transferDust() external onlyOwner returns (uint256) {
         // precaution for reentrancy attack
-        uint256 _dust = dust;
-        dust = 0;
-        IERC20(token).safeTransfer(SAFE_ADDRESS, _dust);
+        if (dust > 0) {
+            uint256 _dust = dust;
+            dust = 0;
+            IERC20(token).transfer(SAFE_ADDRESS, _dust);
+            return _dust;
+        }
+        return 0;
     }
 
     /// @notice Transfers the locked (non-vested) tokens of the passed recipients to the SAFE_ADDRESS
@@ -561,11 +594,11 @@ contract DynamicVestingEscrow is Ownable {
         for (uint256 i = 0; i < _recipients.length; i++) {
             // only seize tokens from the recipients which have not been seized before
             if (!lockedTokensSeizedFor[_recipients[i]]) {
-                totalSeized.add(totalLockedOf(_recipients[i]));
+                totalSeized = totalSeized.add(totalLockedOf(_recipients[i]));
                 lockedTokensSeizedFor[_recipients[i]] = true;
             }
         }
         // transfer the totalSeized amount to the SAFE_ADDRESS
-        IERC20(token).safeTransfer(SAFE_ADDRESS, totalSeized);
+        IERC20(token).transfer(SAFE_ADDRESS, totalSeized);
     }
 }
