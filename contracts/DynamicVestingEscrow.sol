@@ -2,6 +2,11 @@
 
 pragma solidity ^0.6.0;
 
+/// @title Dynamic Vesting Escrow
+/// @author Curve Finance, Yearn Finance, vasa (@vasa-develop)
+/// @notice A vesting escsrow for dynamic teams, based on Curve vesting escrow
+/// @dev A vesting escsrow for dynamic teams, based on Curve vesting escrow
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
@@ -42,7 +47,7 @@ contract DynamicVestingEscrow is Ownable {
     uint256 public totalAllocatedSupply; // total token allocated to the recipients via addRecipients.
     uint256 public ESCROW_TERMINATED_AT; // timestamp at which escow terminated.
     address public SAFE_ADDRESS; // an address where all the funds are sent in case any recipient or vesting escrow is terminated.
-    bool public ALLOW_PAST_START_TIME = false; // a flag that allows decides if past startTime is allowed for any recipient.
+    bool public ALLOW_PAST_START_TIME = false; // a flag that decides if past startTime is allowed for any recipient.
     bool public ESCROW_TERMINATED = false; // global switch to terminate the vesting escrow. See more info in terminateVestingEscrow()
 
     modifier escrowNotTerminated() {
@@ -88,16 +93,21 @@ contract DynamicVestingEscrow is Ownable {
         SAFE_ADDRESS = safeAddress;
     }
 
-    // DANGER: Terminates the vesting escrow forever
-    // All the vesting states will be freezed, recipients can still claim their vested tokens
+    /// @notice Terminates the vesting escrow forever.
+    /// @dev All the vesting states will be freezed, recipients can still claim their vested tokens.
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
     function terminateVestingEscrow() external onlyOwner escrowNotTerminated {
         // set termination variables
         ESCROW_TERMINATED = true;
         ESCROW_TERMINATED_AT = block.timestamp;
     }
 
-    // Updates the SAFE_ADDRESS
-    // WARNING: It is assumed that the SAFE_ADDRESS is NOT malicious
+    /// @notice Updates the SAFE_ADDRESS
+    /// @dev It is assumed that the SAFE_ADDRESS is NOT malicious
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
+    /// @param safeAddress An address where all the tokens are transferred in case of a (recipient/escrow) termination
     function updateSafeAddress(address safeAddress)
         external
         onlyOwner
@@ -111,8 +121,16 @@ contract DynamicVestingEscrow is Ownable {
         SAFE_ADDRESS = safeAddress;
     }
 
-    // Add and fund new recipients
-    // NOTE: Owner needs to approve tokens to this contract
+    /// @notice Add and fund new recipients.
+    /// @dev Owner of the vesting escrow needs to approve tokens to this contract
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
+    /// @param _recipients An array of recipient addresses
+    /// @param _amounts An array of amounts to be vested by the corresponding recipient addresses
+    /// @param _startTimes An array of startTimes of the vesting schedule for the corresponding recipient addresses
+    /// @param _endTimes An array of endTimes of the vesting schedule for the corresponding recipient addresses
+    /// @param _cliffDurations An array of cliff durations of the vesting schedule for the corresponding recipient addresses
+    /// @param _totalAmount Total sum of the amounts in the _amounts array
     function addRecipients(
         address[] calldata _recipients,
         uint256[] calldata _amounts,
@@ -189,7 +207,12 @@ contract DynamicVestingEscrow is Ownable {
         dust.add(_totalAmount);
     }
 
-    // pause recipient vesting
+    /// @notice Pause recipient vesting
+    /// @dev This freezes the vesting schedule for the paused recipient.
+    ///      Recipient will NOT be able to claim until unpaused.
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
+    /// @param recipient The recipient address for which vesting will be paused.
     function pauseRecipient(address recipient)
         external
         onlyOwner
@@ -207,7 +230,13 @@ contract DynamicVestingEscrow is Ownable {
         recipients[recipient].lastPausedAt = block.timestamp;
     }
 
-    // unPause recipient vesting
+    /// @notice UnPause recipient vesting
+    /// @dev This unfreezes the vesting schedule for the paused recipient. Recipient will be able to claim.
+    ///      In order to keep vestingPerSec for the recipient a constant, cliffDuration and endTime for the
+    ///      recipient are shifted by the pause duration so that the recipient resumes with the same state
+    ///      at the time it was paused.
+    ///      Only owner of the vesting escrow can invoke this function.
+    /// @param recipient The recipient address for which vesting will be unpaused.
     function unPauseRecipient(address recipient)
         external
         onlyOwner
@@ -230,7 +259,12 @@ contract DynamicVestingEscrow is Ownable {
         recipients[recipient].endTime.add(pausedFor);
     }
 
-    // terminate recipient vesting
+    /// @notice Terminate recipient vesting
+    /// @dev This terminates the vesting schedule for the recipient forever.
+    ///      Recipient will NOT be able to claim.
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Can only be invoked if the escrow is NOT terminated.
+    /// @param recipient The recipient address for which vesting will be terminated.
     function terminateRecipient(address recipient)
         external
         onlyOwner
@@ -253,12 +287,17 @@ contract DynamicVestingEscrow is Ownable {
         IERC20(token).safeTransfer(SAFE_ADDRESS, _bal);
     }
 
-    // claim tokens
+    /// @notice Claim a specific amount of tokens.
+    /// @dev Claim a specific amount of tokens.
+    ///      Will revert if amount parameter is greater than the claimable amount
+    ///      of tokens for the recipient at the time of function invocation.
+    ///      Can be invoked by any UnPaused recipient.
+    /// @param amount The amount of tokens recipient wants to claim.
     function claim(uint256 amount) external recipientIsUnpaused(msg.sender) {
         _claimFor(amount, msg.sender);
     }
 
-    // claim tokens
+    // claim tokens for a specific recipient
     function _claimFor(uint256 _amount, address _recipient) internal {
         // get recipient
         Recipient storage recipient = recipients[_recipient];
@@ -297,8 +336,10 @@ contract DynamicVestingEscrow is Ownable {
         IERC20(token).safeTransfer(_recipient, _amount);
     }
 
-    // get total vested tokens
-    // only pass array of non-terminated recipient
+    /// @notice Get total vested tokens for multiple recipients.
+    /// @dev Reverts if any of the recipients is terminated.
+    /// @param _recipients An array of non-terminated recipient addresses.
+    /// @return totalAmount total vested tokens for all _recipients passed.
     function batchTotalVestedOf(address[] calldata _recipients)
         public
         view
@@ -309,7 +350,10 @@ contract DynamicVestingEscrow is Ownable {
         }
     }
 
-    // get total vested tokens of a recipient
+    /// @notice Get total vested tokens of a specific recipient.
+    /// @dev Reverts if the recipient is terminated.
+    /// @param recipient A non-terminated recipient address.
+    /// @return Total vested tokens for the recipient address.
     function totalVestedOf(address recipient)
         public
         view
@@ -323,7 +367,10 @@ contract DynamicVestingEscrow is Ownable {
         return _recipient.totalClaimed.add(claimableAmountFor(recipient));
     }
 
-    // Can a recipient claim right now
+    /// @notice Check if a recipient address can successfully invoke claim.
+    /// @dev Reverts if the recipient is a zero address.
+    /// @param recipient A zero address recipient address.
+    /// @return bool representing if the recipient can successfully invoke claim.
     function canClaim(address recipient)
         public
         view
@@ -348,7 +395,10 @@ contract DynamicVestingEscrow is Ownable {
         return true;
     }
 
-    // Time at which the recipient can start claiming tokens
+    /// @notice Check the time after (inclusive) which recipient can successfully invoke claim.
+    /// @dev Reverts if the recipient is a zero address.
+    /// @param recipient A zero address recipient address.
+    /// @return Returns the time after (inclusive) which recipient can successfully invoke claim.
     function claimStartTimeFor(address recipient)
         public
         view
@@ -362,7 +412,10 @@ contract DynamicVestingEscrow is Ownable {
             );
     }
 
-    // Tokens that can be claimed right now by a recipient
+    /// @notice Get amount of tokens that can be claimed by a recipient at the current timestamp.
+    /// @dev Reverts if the recipient is terminated.
+    /// @param recipient A non-terminated recipient address.
+    /// @return Amount of tokens that can be claimed by a recipient at the current timestamp.
     function claimableAmountFor(address recipient)
         public
         view
@@ -379,8 +432,10 @@ contract DynamicVestingEscrow is Ownable {
             );
     }
 
-    // get total locked tokens
-    // only pass array of non-terminated recipient
+    /// @notice Get total locked (non-vested) tokens for multiple non-terminated recipient addresses.
+    /// @dev Reverts if any of the recipients is terminated.
+    /// @param _recipients An array of non-terminated recipient addresses.
+    /// @return totalAmount Total locked (non-vested) tokens for multiple non-terminated recipient addresses.
     function batchTotalLockedOf(address[] calldata _recipients)
         public
         view
@@ -391,7 +446,10 @@ contract DynamicVestingEscrow is Ownable {
         }
     }
 
-    // get total locked tokens of a recipient
+    /// @notice Get total locked tokens of a specific recipient.
+    /// @dev Reverts if any of the recipients is terminated.
+    /// @param recipient A non-terminated recipient address.
+    /// @return Total locked tokens of a specific recipient.
     function totalLockedOf(address recipient)
         public
         view
@@ -451,9 +509,19 @@ contract DynamicVestingEscrow is Ownable {
         }
     }
 
-    // Allows owner to rescue the ERC20 assets (other than token) in case of any emergency
-    // WARNING: It is assumed that the asset address is NOT a malicious address
-    function inCaseAssetGetStuck(address asset, address to) external onlyOwner {
+    /// @notice Allows owner to transfer the ERC20 assets (other than token) to the "to" address in case of any emergency
+    /// @dev It is assumed that the "to" address is NOT malicious
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Reverts if the asset address is a zero address or the token address.
+    ///      Reverts if the to address is a zero address.
+    /// @param asset Address of the ERC20 asset to be rescued
+    /// @param to Address to which all ERC20 asset amount will be transferred
+    /// @return rescued Total amount of asset transferred to the SAFE_ADDRESS.
+    function inCaseAssetGetStuck(address asset, address to)
+        external
+        onlyOwner
+        returns (uint256 rescued)
+    {
         // asset address should NOT be a 0 address
         require(asset != address(0), "inCaseAssetGetStuck: 0 address");
         // asset address should NOT be the token address
@@ -461,11 +529,13 @@ contract DynamicVestingEscrow is Ownable {
         // to address should NOT a 0 address
         require(to != address(0), "inCaseAssetGetStuck: 0 address");
         // transfer all the balance of the asset this contract hold to the "to" address
-        uint256 _bal = IERC20(asset).balanceOf(asset);
-        IERC20(asset).safeTransfer(SAFE_ADDRESS, _bal);
+        rescued = IERC20(asset).balanceOf(asset);
+        IERC20(asset).safeTransfer(to, rescued);
     }
 
-    // Transfers the dust to the SAFE_ADDRESS
+    /// @notice Transfers the dust to the SAFE_ADDRESS
+    /// @dev It is assumed that the SAFE_ADDRESS is NOT malicious
+    ///      Only owner of the vesting escrow can invoke this function.
     function transferDust() external onlyOwner {
         // precaution for reentrancy attack
         uint256 _dust = dust;
@@ -473,8 +543,13 @@ contract DynamicVestingEscrow is Ownable {
         IERC20(token).safeTransfer(SAFE_ADDRESS, _dust);
     }
 
-    // Transfers the locked (non-vested) tokens of the passed recipients to the SAFE_ADDRESS
-    // Only pass array of non-terminated recipient
+    /// @notice Transfers the locked (non-vested) tokens of the passed recipients to the SAFE_ADDRESS
+    /// @dev It is assumed that the SAFE_ADDRESS is NOT malicious
+    ///      Only owner of the vesting escrow can invoke this function.
+    ///      Reverts if any of the recipients is terminated.
+    ///      Can only be invoked if the escrow is terminated.
+    /// @param _recipients An array of non-terminated recipient addresses.
+    /// @return totalSeized Total tokens seized from the recipients.
     function seizeLockedTokens(address[] calldata _recipients)
         external
         onlyOwner
