@@ -33,6 +33,7 @@ contract DynamicVestingEscrow is Ownable {
     }
 
     mapping(address => Recipient) public recipients; // mapping from recipient address to Recipient struct
+    mapping(address => bool) public lockedTokensSeizedFor; // in case of escrow termination, a mapping to keep track of which
     address public constant token = 0x6B175474E89094C44Da98b954EedeAC495271d0F; // vesting token address
     // WARNING: The contract assumes that the token address is NOT malicious.
 
@@ -88,17 +89,9 @@ contract DynamicVestingEscrow is Ownable {
     }
 
     // DANGER: Terminates the vesting escrow forever
-    // All the tokens will be transferred to the SAFE_ADDRESS
+    // All the vesting states will be freezed, recipients can still claim their vested tokens
     function terminateVestingEscrow() external onlyOwner escrowNotTerminated {
-        // transfer all token balance to SAFE_ADDRESS
-        // This will also include the any token balance that was directly transferred to this contract
-        uint256 _bal = IERC20(token).balanceOf(address(this));
-        if (_bal > 0) {
-            // transfer the token balance to the SAFE_ADDRESS
-            IERC20(token).safeTransfer(SAFE_ADDRESS, _bal);
-        }
-
-        // set termination flag as true
+        // set termination variables
         ESCROW_TERMINATED = true;
         ESCROW_TERMINATED_AT = block.timestamp;
     }
@@ -305,7 +298,16 @@ contract DynamicVestingEscrow is Ownable {
     }
 
     // get total vested tokens
-    // function totalVested() public view escrowNotTerminated {}
+    // only pass array of non-terminated recipient
+    function batchTotalVestedOf(address[] calldata _recipients)
+        public
+        view
+        returns (uint256 totalAmount)
+    {
+        for (uint256 i = 0; i < _recipients.length; i++) {
+            totalAmount.add(totalVestedOf(_recipients[i]));
+        }
+    }
 
     // get total vested tokens of a recipient
     function totalVestedOf(address recipient)
@@ -378,7 +380,16 @@ contract DynamicVestingEscrow is Ownable {
     }
 
     // get total locked tokens
-    function totalLocked() public view {}
+    // only pass array of non-terminated recipient
+    function batchTotalLockedOf(address[] calldata _recipients)
+        public
+        view
+        returns (uint256 totalAmount)
+    {
+        for (uint256 i = 0; i < _recipients.length; i++) {
+            totalAmount.add(totalLockedOf(_recipients[i]));
+        }
+    }
 
     // get total locked tokens of a recipient
     function totalLockedOf(address recipient)
@@ -460,5 +471,26 @@ contract DynamicVestingEscrow is Ownable {
         uint256 _dust = dust;
         dust = 0;
         IERC20(token).safeTransfer(SAFE_ADDRESS, _dust);
+    }
+
+    // Transfers the locked (non-vested) tokens of the passed recipients to the SAFE_ADDRESS
+    // Only pass array of non-terminated recipient
+    function seizeLockedTokens(address[] calldata _recipients)
+        external
+        onlyOwner
+        returns (uint256 totalSeized)
+    {
+        // only seize if escrow is terminated
+        require(ESCROW_TERMINATED, "seizeLockedTokens: escrow not terminated");
+        // get the total tokens to be seized
+        for (uint256 i = 0; i < _recipients.length; i++) {
+            // only seize tokens from the recipients which have not been seized before
+            if (!lockedTokensSeizedFor[_recipients[i]]) {
+                totalSeized.add(totalLockedOf(_recipients[i]));
+                lockedTokensSeizedFor[_recipients[i]] = true;
+            }
+        }
+        // transfer the totalSeized amount to the SAFE_ADDRESS
+        IERC20(token).safeTransfer(SAFE_ADDRESS, totalSeized);
     }
 }
