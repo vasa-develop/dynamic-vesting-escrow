@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.6.0;
+pragma solidity 0.6.12;
 
 /// @title Dynamic Vesting Escrow
 /// @author Curve Finance, Yearn Finance, vasa (@vasa-develop)
@@ -39,14 +39,14 @@ contract DynamicVestingEscrow is Ownable {
 
     mapping(address => Recipient) public recipients; // mapping from recipient address to Recipient struct
     mapping(address => bool) public lockedTokensSeizedFor; // in case of escrow termination, a mapping to keep track of which
-    address public token; // vesting token address
+    address public immutable token; // vesting token address
     // WARNING: The contract assumes that the token address is NOT malicious.
 
     uint256 public dust; // total amount of token that is sitting as dust in this contract (unallocatedSupply)
     uint256 public totalClaimed; // total number of tokens that have been claimed.
     uint256 public totalAllocatedSupply; // total token allocated to the recipients via addRecipients.
     uint256 public ESCROW_TERMINATED_AT; // timestamp at which escow terminated.
-    address public SAFE_ADDRESS; // an address where all the funds are sent in case any recipient or vesting escrow is terminated.
+    address public immutable SAFE_ADDRESS; // an address where all the funds are sent in case any recipient or vesting escrow is terminated.
     bool public ALLOW_PAST_START_TIME = false; // a flag that decides if past startTime is allowed for any recipient.
     bool public ESCROW_TERMINATED = false; // global switch to terminate the vesting escrow. See more info in terminateVestingEscrow()
 
@@ -160,7 +160,7 @@ contract DynamicVestingEscrow is Ownable {
 
         // transfer funds from the msg.sender
         // Will fail if the allowance is less than _totalAmount
-        IERC20(token).transferFrom(msg.sender, address(this), _totalAmount);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), _totalAmount);
 
         // register _totalAmount before allocation
         uint256 _before = _totalAmount;
@@ -302,7 +302,7 @@ contract DynamicVestingEscrow is Ownable {
         uint256 _bal = recipients[recipient].totalVestingAmount.sub(
             recipients[recipient].totalClaimed
         );
-        IERC20(token).transfer(SAFE_ADDRESS, _bal);
+        IERC20(token).safeTransfer(SAFE_ADDRESS, _bal);
         // set vesting status of the recipient as "Terminated"
         recipients[recipient].recipientVestingStatus = Status.Terminated;
     }
@@ -353,7 +353,7 @@ contract DynamicVestingEscrow is Ownable {
         );
 
         // transfer the amount to the _recipient
-        IERC20(token).transfer(_recipient, _amount);
+        IERC20(token).safeTransfer(_recipient, _amount);
     }
 
     /// @notice Get total vested tokens for multiple recipients.
@@ -558,7 +558,7 @@ contract DynamicVestingEscrow is Ownable {
         );
         // transfer all the balance of the asset this contract hold to the "to" address
         rescued = IERC20(asset).balanceOf(address(this));
-        IERC20(asset).transfer(to, rescued);
+        IERC20(asset).safeTransfer(to, rescued);
     }
 
     /// @notice Transfers the dust to the SAFE_ADDRESS.
@@ -570,7 +570,7 @@ contract DynamicVestingEscrow is Ownable {
         if (dust > 0) {
             uint256 _dust = dust;
             dust = 0;
-            IERC20(token).transfer(SAFE_ADDRESS, _dust);
+            IERC20(token).safeTransfer(SAFE_ADDRESS, _dust);
             return _dust;
         }
         return 0;
@@ -599,6 +599,6 @@ contract DynamicVestingEscrow is Ownable {
             }
         }
         // transfer the totalSeized amount to the SAFE_ADDRESS
-        IERC20(token).transfer(SAFE_ADDRESS, totalSeized);
+        IERC20(token).safeTransfer(SAFE_ADDRESS, totalSeized);
     }
 }
